@@ -1,5 +1,5 @@
 local buf = require 'buf'
-local env = require 'env'
+local environment = require 'env'
 local is_symbol = require 'sym'.is_symbol
 
 local _M = {}
@@ -23,7 +23,6 @@ end
 
 function _M.tokenize(buf)
   local token = buf:next_token()
-  print("token", token)
   if token == "(" then
     local list = {}
 
@@ -36,7 +35,7 @@ function _M.tokenize(buf)
       elseif not t then
         error("end of file")
       else
-        list[#list+1] = buf:next_token()
+        list[#list+1] = _M.tokenize(buf)
       end
     end
     return list
@@ -64,20 +63,15 @@ local function add(env, args)
   return i
 end
 
-local function resolve_function(atom, env)
-  if atom == "+" then
-    return add
-  end
-
-  error("not done yet")
-end
+local native_functions = {}
+native_functions["+"]=add
 
 local function eval_node(atom, env)
   if is_symbol(atom) then
     return env:get(atom)
   elseif is_list(atom) then
     local a = {}
-    for i,v in next(atom, 2) do
+    for i,v in next, atom, 1 do
       a[#a+1] = eval(v, env)
     end
     return a
@@ -94,6 +88,27 @@ local function print_list(l)
   return s .. ")"
 end
 
+function trace(o)
+  if not o then
+    print(nil)
+    return
+  end
+  for k,v in pairs(o) do
+    print(k, v)
+  end
+end
+
+local function is_user_function(o)
+  return o and o.args and o.env and o.body
+end
+
+local function is_function(o)
+  if native_functions[o] then
+    return true
+  end
+  return is_user_function(o)
+end
+
 function eval(atom, env)
   while true do
     if is_list(atom) then
@@ -104,8 +119,13 @@ function eval(atom, env)
       return eval_node(atom, env)
     end
 
-    print("evaling: ", print_list(atom))
+    -- trace(atom)
+
     local first = atom[1]
+
+    if is_symbol(first) or is_list(first) then
+      first = eval(atom[1], env)
+    end
 
     if first == "define" then
       local sym = atom[2]
@@ -120,6 +140,12 @@ function eval(atom, env)
         env=env:create_child()
       }
       return f
+    elseif first == "begin" then
+      local x
+      for _, v in next, atom, 1 do
+        x = eval(v, env)
+      end
+      return x
     elseif first == "if" then
       local pred = eval(atom[2], env)
       if pred then
@@ -129,16 +155,23 @@ function eval(atom, env)
       else
         return false
       end
+    elseif is_user_function(first) then
+      local args = {}
+      for _, v in next, atom, 1 do
+        args[#args+1] = eval(v, env)
+      end
+
+      local e = first.env:bind(first.args, args)
+
+      return eval(first.body, e)
     else
-      -- evaluate function
-      local func = resolve_function(first, env)
+      local func = native_functions[first]
       local args = {}
 
-      for i, v in ipairs(atom) do
-        if i ~= 1 then
-          args[#args+1] = eval(v, env)
-        end
+      for _, v in next, atom, 1 do
+        args[#args+1] = eval(v, env)
       end
+
       return func(env, args)
     end
   end
@@ -147,12 +180,12 @@ end
 function _M.parse_eval(s, e)
   local b = buf.create(s)
   local tokens = _M.tokenize(b)
-  local result = eval(tokens, e or env.create())
+  local result = eval(tokens, e or environment.create())
   return result
 end
 
 function repl()
-  local env = env.create()
+  local env = environment.create()
   while true do
     io.write(">")
     io.flush()
@@ -182,6 +215,7 @@ local function run_tests()
   assert_expr("3", "(+ 1 2)")
   assert_expr("2", "(if 1 2 3)")
   assert_expr("2", "(if false 1 2)")
+  assert_expr("1", "((lambda (x) (+ 1 x)) 0)")
 end
 
 if arg[1] == "test" then

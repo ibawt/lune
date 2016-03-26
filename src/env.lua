@@ -28,6 +28,24 @@ function _M:set(key, val)
   end
 end
 
+function _M:bind(argument_list, args)
+  local e = self:create()
+  for i,v in ipairs(argument_list) do
+    if v == "&" then
+      local a = {}
+      local sym = next(argument_list, i)
+      for j, vv in next, args, i do
+        a[#a+1] = vv
+      end
+      e:define(sym, a)
+      return e
+    else
+      e:define(v, args[i])
+    end
+  end
+  return e
+end
+
 function _M:get(key)
   local v = self.vals[key]
   if not v and self.parent then

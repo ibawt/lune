@@ -25,6 +25,21 @@ function Buf:next()
   return t
 end
 
+local function is_reserved(t)
+  local x = {
+    "+", "-", "*", "/", "%",
+    "if", "lambda", "begin", "define",
+    "set!"
+  }
+  for _, v in ipairs(x) do
+    if v == t then
+      return true
+    end
+  end
+
+  return false
+end
+
 local function parse_atom(t)
   local n = tonumber(t)
   if n then
@@ -42,6 +57,11 @@ local function parse_atom(t)
   if n == "nil" then
     return nil
   end
+
+  if is_reserved(t) then
+    return t
+  end
+
   sym.insert(t)
   return t
 end
