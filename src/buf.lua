@@ -1,19 +1,27 @@
+local sym = require 'sym'
 local Buf = {}
 Buf.__index = Buf
 
 function Buf.create(buf)
-  local b = { buf=buf, pos=0 }
+  local b = { buf=buf, pos=1 }
   setmetatable(b, Buf)
   return b
 end
 
 function Buf:peek()
-  return self.buf[self.pos]
+  if self.pos > self.buf:len() then
+    return
+  end
+  return self.buf:sub(self.pos, self.pos)
 end
 
 function Buf:next()
-  local t = self.buf[self.pos]
-  self.pos += 1
+  if self.pos > self.buf:len() then
+    return
+  end
+
+  local t = self.buf:sub(self.pos, self.pos)
+  self.pos = self.pos + 1
   return t
 end
 
@@ -34,7 +42,7 @@ local function parse_atom(t)
   if n == "nil" then
     return nil
   end
-
+  sym.insert(t)
   return t
 end
 
@@ -65,7 +73,7 @@ function Buf:read_atom(t)
       return parse_atom(t)
     end
     local c = self:next()
-    if not is_whitespace(c) then
+    if c and not is_whitespace(c) then
       t = t .. c
     else
       return parse_atom(t)
@@ -77,7 +85,6 @@ end
 function Buf:next_token()
   while true do
     local t = self:next()
-
     if t == "\"" then
       return self:read_string()
     elseif t == "(" then
