@@ -9,6 +9,10 @@ function is_list(o)
   return type(o) == "table" and o[1]
 end
 
+function is_pair(o)
+  return type(o) == "table" and #o == 2
+end
+
 function is_atom(o)
   return not is_list(o)
 end
@@ -42,22 +46,33 @@ function _M.tokenize(buf)
   elseif token == ")" then
     error("unexpectd )")
   elseif token == "'" then
-    return make_quote_form(token, buf)
+    return {token, _M.tokenize(buf)}
   elseif token == "`" then
-    return make_quote_form(token, buf)
+    return {token, _M.tokenize(buf)}
   elseif token == "~" then
-    return make_quote_form(token, buf)
+    return {token, _M.tokenize(buf)}
   elseif token == "~@" then
-    return make_quote_form(token, buf)
+    return {token, _M.tokenize(buf)}
   else
     -- atom
     return token
   end
 end
 
+local function cons(a, list)
+  local x = {a}
+  for _, v in ipairs(list) do
+    x[#x+1] = v
+  end
+  return x
+end
+
 local function add(env, args)
   local i = 0
   for _, v in ipairs(args) do
+    if not is_number(v) then
+      error("not a number")
+    end
     i = i + v
   end
   return i
@@ -65,6 +80,23 @@ end
 
 local native_functions = {}
 native_functions["+"]=add
+native_functions["cons"]=cons
+
+local function append(args)
+  local a = args[1]
+  local b = args[2]
+
+  if is_list(a) and is_list(b) then
+    for _, v in ipairs(b) do
+      a[#a+1] = v
+    end
+    return a
+  elseif is_list(a) and not b then
+    return a
+  else
+    error("invalid arguments!")
+  end
+end
 
 local function eval_node(atom, env)
   if is_symbol(atom) then
@@ -109,6 +141,37 @@ local function is_function(o)
   return is_user_function(o)
 end
 
+local function rest(o)
+  if not is_list(o) then
+    error("not a list")
+  end
+
+  local t = {}
+  for _, v in next, o, 1 do
+    t[#t+1] = v
+  end
+  return t
+end
+
+local function expand_quasiquote(atom, env)
+  if not is_pair(atom) then
+    return {"'", atom}
+  end
+
+  if atom[1] == "~" then
+    return atom[2]
+  end
+
+  if is_pair(atom) then
+    if is_list(atom[1]) and atom[1][1] == "~@" then
+      local rest = rest(atom)
+      return {"append", atom[1][2], rest}
+    end
+  end
+  local rest = rest(atom)
+  return { "cons", expand_quasiquote(atom[1], env), expand_quasiquote(rest, env) }
+end
+
 function eval(atom, env)
   while true do
     if is_list(atom) then
@@ -133,13 +196,33 @@ function eval(atom, env)
       local value = eval(atom[3], env)
       env:define(sym, value)
       return sym
+    elseif first == "let" then
+      local bindings = atom[2]
+      local body = atom[3]
+
+      local keys = {}
+      local vals = {}
+      for i, v in ipairs(bindings) do
+        keys[i] = v[1]
+        vals[i] = eval(v[2], env)
+      end
+      local e = env:bind(keys, vals)
+      return eval(body, e)
+    elseif first == "set!" then
+      local sym = atom[2]
+      local val = eval(atom[3], env)
+      return env:set(sym, val)
     elseif first == "lambda" then
       local f = {
         args=atom[2],
         body=atom[3],
-        env=env:create_child()
+        env=env:create()
       }
       return f
+    elseif first == "'" then
+      return atom[2]
+    elseif first == "`" then
+      return expand_quasiquote(atom[2], env)
     elseif first == "begin" then
       local x
       for _, v in next, atom, 1 do
@@ -191,6 +274,7 @@ function repl()
     io.flush()
     local line = io.read()
     if not line then
+      print("exiting...")
       return
     end
     local b = buf.create(line)
@@ -203,11 +287,20 @@ end
 local function assert_expr(t1, t2)
   local r1 = _M.parse_eval(t1)
   local r2 = _M.parse_eval(t2)
-
-  if r1 == r2 then
+  if is_list(r1) and is_list(r2) then
+    for i,v in ipairs(r1) do
+      if v ~= r2[i] then 
+        print(string.format("%s == %s FAIL", t1, t2))
+        return
+      end
+    end
     print(string.format("%s == %s PASS", t1, t2))
   else
-    print(string.format("%s == %s FAIL", t1, t2))
+    if r1 == r2 then
+      print(string.format("%s == %s PASS", t1, t2))
+    else
+      print(string.format("%s == %s FAIL", t1, t2))
+    end
   end
 end
 
@@ -216,6 +309,9 @@ local function run_tests()
   assert_expr("2", "(if 1 2 3)")
   assert_expr("2", "(if false 1 2)")
   assert_expr("1", "((lambda (x) (+ 1 x)) 0)")
+  assert_expr("1", "(let ((x 1)) x)")
+  assert_expr("'(1 2)", "'(1 2)")
+  assert_expr("'(1 2)", "`(1 2)")
 end
 
 if arg[1] == "test" then

@@ -2,6 +2,8 @@ local sym = require 'sym'
 local Buf = {}
 Buf.__index = Buf
 
+Buf.END_OF_FILE = "end of file"
+
 function Buf.create(buf)
   local b = { buf=buf, pos=1 }
   setmetatable(b, Buf)
@@ -29,7 +31,7 @@ local function is_reserved(t)
   local x = {
     "+", "-", "*", "/", "%",
     "if", "lambda", "begin", "define",
-    "set!"
+    "set!", "let", "cons"
   }
   for _, v in ipairs(x) do
     if v == t then
@@ -112,8 +114,17 @@ function Buf:next_token()
     elseif t == ")" then
       return t
     elseif t == "'" then
+      return t
+    elseif t == "`" then
+      return t
     elseif t == "~" then
+      if self:peek() == "@" then
+        self:read()
+        return "~@"
+      end
+      return "~"
     elseif t == ";" then
+      error("not implemented")
     elseif is_whitespace(t) then
     else
       return self:read_atom(t)
