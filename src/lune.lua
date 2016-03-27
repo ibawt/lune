@@ -25,6 +25,34 @@ function is_number(o)
   return type(o) == "number"
 end
 
+local function debug_table(x)
+  local s = ""
+  for k,v in pairs(x) do
+    s = s .. k .. ":" .. tostring(v) .. ","
+  end
+  return s
+end
+
+local function print_list(l)
+  if not is_list(l) then
+    if l and type(l) == "table" then
+      return debug_table(l)
+    else
+      return tostring(l)
+    end
+  end
+
+  local s = "("
+  for _, v in ipairs(l) do
+    if is_list(l) then
+      s = s .. print_list(v)
+    else
+      s = s .. v .. " "
+    end
+  end
+  return s .. ")"
+end
+
 function _M.tokenize(buf)
   local token = buf:next_token()
   if token == "(" then
@@ -59,9 +87,9 @@ function _M.tokenize(buf)
   end
 end
 
-local function cons(a, list)
-  local x = {a}
-  for _, v in ipairs(list) do
+local function cons(env, args)
+  local x = {args[1]}
+  for _, v in ipairs(args[2]) do
     x[#x+1] = v
   end
   return x
@@ -70,19 +98,14 @@ end
 local function add(env, args)
   local i = 0
   for _, v in ipairs(args) do
-    if not is_number(v) then
-      error("not a number")
-    end
+    assert(is_number(v))
     i = i + v
   end
   return i
 end
 
-local native_functions = {}
-native_functions["+"]=add
-native_functions["cons"]=cons
-
 local function append(args)
+  assert(#args == 2)
   local a = args[1]
   local b = args[2]
 
@@ -98,6 +121,16 @@ local function append(args)
   end
 end
 
+local function list(env, args)
+  return args
+end
+
+local native_functions = {}
+native_functions["+"]=add
+native_functions["cons"]=cons
+native_functions["append"]=append
+native_functions["list"]=list
+
 local function eval_node(atom, env)
   if is_symbol(atom) then
     return env:get(atom)
@@ -110,14 +143,6 @@ local function eval_node(atom, env)
   else
     return atom
   end
-end
-
-local function print_list(l)
-  local s = "("
-  for _, v in ipairs(l) do
-    s = s .. v .. " "
-  end
-  return s .. ")"
 end
 
 function trace(o)
@@ -169,7 +194,33 @@ local function expand_quasiquote(atom, env)
     end
   end
   local rest = rest(atom)
-  return { "cons", expand_quasiquote(atom[1], env), expand_quasiquote(rest, env) }
+  -- print("atom[1]", atom[1])
+  local x = { "cons", expand_quasiquote(atom[1], env), expand_quasiquote(rest, env) }
+  return x
+end
+
+local function macro_expand(atom, env)
+  if is_list(atom) then
+    if #atom > 0 then
+      if is_symbol(atom[1]) then
+        local fn = env:get(atom[1])
+        if fn and fn.macro then
+          return macro_expand(eval_macro(fn, env))
+        end
+      elseif atom[1] == "lambda" then
+        for i,v in next, atom, 2 do
+          atom[i] = macro_expand(atom[i], env)
+        end
+        return atom
+      end
+    end
+
+    for i, v in ipairs(atom) do
+      atom[i] = macro_expand(atom[i], env)
+    end
+  end
+
+  return atom
 end
 
 function eval(atom, env)
@@ -182,7 +233,8 @@ function eval(atom, env)
       return eval_node(atom, env)
     end
 
-    -- trace(atom)
+    atom = macro_expand(atom, env)
+    -- print(print_list(atom))
 
     local first = atom[1]
 
@@ -212,6 +264,21 @@ function eval(atom, env)
       local sym = atom[2]
       local val = eval(atom[3], env)
       return env:set(sym, val)
+    elseif first == "defmacro" then
+      local name = atom[2]
+      local params = atom[3]
+      local body = {"begin"}
+      for _, v in ipairs(atom[4]) do
+        body[#body+1] = v
+      end
+      local macro={
+        macro=true,
+        args=params,
+        body=body,
+        env=env:create()
+      }
+      env:define(name, macro)
+      return name
     elseif first == "lambda" then
       local f = {
         args=atom[2],
@@ -222,7 +289,7 @@ function eval(atom, env)
     elseif first == "'" then
       return atom[2]
     elseif first == "`" then
-      return expand_quasiquote(atom[2], env)
+      return eval(expand_quasiquote(atom[2], env), env)
     elseif first == "begin" then
       local x
       for _, v in next, atom, 1 do
@@ -291,6 +358,7 @@ local function assert_expr(t1, t2)
     for i,v in ipairs(r1) do
       if v ~= r2[i] then 
         print(string.format("%s == %s FAIL", t1, t2))
+        print(string.format("%s != %s", v, r2[i]))
         return
       end
     end
